@@ -228,7 +228,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "cmsis_compiler.h"
+#include "DAP_port.h"
 
 // DAP Data structure
 typedef struct {
@@ -326,12 +326,32 @@ extern void     DAP_Setup (void);
 #ifndef DELAY_SLOW_CYCLES
 #define DELAY_SLOW_CYCLES       3U      // Number of cycles for one iteration
 #endif
-#if defined(__CC_ARM)
+#if defined(DAP_PORT_PIN_DELAY_SLOW)
+__STATIC_FORCEINLINE void PIN_DELAY_SLOW (uint32_t delay) {
+  DAP_PORT_PIN_DELAY_SLOW(delay);
+}
+#elif defined(__riscv)
+/* Loop counts are architecture timing parameters, not wall-time microseconds.
+ * Guard zero before decrementing. RV64 uses addiw to preserve uint32_t wrap. */
+__STATIC_FORCEINLINE void PIN_DELAY_SLOW (uint32_t delay) {
+  if (delay == 0U) { return; }
+  __asm__ volatile (
+    "1:\n\t"
+#if __riscv_xlen == 64
+    "addiw %0, %0, -1\n\t"
+#else
+    "addi %0, %0, -1\n\t"
+#endif
+    "bnez %0, 1b\n\t"
+    : "+r" (delay) : : "memory"
+  );
+}
+#elif defined(__CC_ARM)
 __STATIC_FORCEINLINE void PIN_DELAY_SLOW (uint32_t delay) {
   uint32_t count = delay;
   while (--count);
 }
-#else
+#elif defined(__arm__) || defined(__thumb__)
 __STATIC_FORCEINLINE void PIN_DELAY_SLOW (uint32_t delay) {
   __ASM volatile (
   ".syntax unified\n"
@@ -341,6 +361,8 @@ __STATIC_FORCEINLINE void PIN_DELAY_SLOW (uint32_t delay) {
   : "+l" (delay) : : "cc"
   );
 }
+#else
+#error "Provide DAP_PORT_PIN_DELAY_SLOW for this architecture"
 #endif
 
 // Fixed delay for fast clock generation
@@ -348,6 +370,9 @@ __STATIC_FORCEINLINE void PIN_DELAY_SLOW (uint32_t delay) {
 #define DELAY_FAST_CYCLES       0U      // Number of cycles: 0..3
 #endif
 __STATIC_FORCEINLINE void PIN_DELAY_FAST (void) {
+#if defined(DAP_PORT_PIN_DELAY_FAST)
+  DAP_PORT_PIN_DELAY_FAST();
+#else
 #if (DELAY_FAST_CYCLES >= 1U)
   __NOP();
 #endif
@@ -357,6 +382,7 @@ __STATIC_FORCEINLINE void PIN_DELAY_FAST (void) {
 #if (DELAY_FAST_CYCLES >= 3U)
   __NOP();
 #endif
+#endif /* DAP_PORT_PIN_DELAY_FAST */
 }
 
 #ifdef  __cplusplus
