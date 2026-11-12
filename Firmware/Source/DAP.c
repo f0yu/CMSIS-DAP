@@ -121,7 +121,7 @@ static uint8_t DAP_Info(uint8_t id, uint8_t *info) {
                 ((DAP_JTAG != 0)         ? (1U << 1) : 0U) |
                 ((SWO_UART != 0)         ? (1U << 2) : 0U) |
                 ((SWO_MANCHESTER != 0)   ? (1U << 3) : 0U) |
-                /* Atomic Commands  */     (1U << 4)       |
+                ((DAP_ATOMIC_COMMANDS != 0) ? (1U << 4) : 0U)       |
                 ((TIMESTAMP_CLOCK != 0U) ? (1U << 5) : 0U) |
                 ((SWO_STREAM != 0U)      ? (1U << 6) : 0U) |
                 ((DAP_UART != 0U)        ? (1U << 7) : 0U);
@@ -185,8 +185,12 @@ static uint8_t DAP_Info(uint8_t id, uint8_t *info) {
 // Delay for specified time
 //    delay:  delay time in ms
 void Delayms(uint32_t delay) {
+#if defined(DAP_PORT_DELAY_MS)
+  DAP_PORT_DELAY_MS(delay);
+#else
   delay *= ((CPU_CLOCK/1000U) + (DELAY_SLOW_CYCLES-1U)) / DELAY_SLOW_CYCLES;
   PIN_DELAY_SLOW(delay);
+#endif
 }
 
 
@@ -200,9 +204,13 @@ static uint32_t DAP_Delay(const uint8_t *request, uint8_t *response) {
 
   delay  = (uint32_t)(*(request+0)) |
            (uint32_t)(*(request+1) << 8);
+#if defined(DAP_PORT_DELAY_US)
+  DAP_PORT_DELAY_US(delay);
+#else
   delay *= ((CPU_CLOCK/1000000U) + (DELAY_SLOW_CYCLES-1U)) / DELAY_SLOW_CYCLES;
 
   PIN_DELAY_SLOW(delay);
+#endif
 
   *response = DAP_OK;
   return ((2U << 16) | 1U);
@@ -301,6 +309,11 @@ static uint32_t DAP_ResetTarget(uint8_t *response) {
 //             number of bytes in request (upper 16 bits)
 static uint32_t DAP_SWJ_Pins(const uint8_t *request, uint8_t *response) {
 #if ((DAP_SWD != 0) || (DAP_JTAG != 0))
+#if defined(DAP_PORT_SWJ_PINS)
+  uint32_t wait = (uint32_t)request[2] | ((uint32_t)request[3] << 8) |
+                  ((uint32_t)request[4] << 16) | ((uint32_t)request[5] << 24);
+  *response = DAP_PORT_SWJ_PINS(request[0], request[1], wait);
+#else
   uint32_t value;
   uint32_t select;
   uint32_t wait;
@@ -389,6 +402,7 @@ static uint32_t DAP_SWJ_Pins(const uint8_t *request, uint8_t *response) {
           (PIN_nRESET_IN()    << DAP_SWJ_nRESET);
 
   *response = (uint8_t)value;
+#endif /* DAP_PORT_SWJ_PINS */
 #else
   *response = 0U;
 #endif
@@ -405,7 +419,6 @@ static uint32_t DAP_SWJ_Pins(const uint8_t *request, uint8_t *response) {
 static uint32_t DAP_SWJ_Clock(const uint8_t *request, uint8_t *response) {
 #if ((DAP_SWD != 0) || (DAP_JTAG != 0))
   uint32_t clock;
-  uint32_t delay;
 
   clock = (uint32_t)(*(request+0) <<  0) |
           (uint32_t)(*(request+1) <<  8) |
@@ -417,9 +430,13 @@ static uint32_t DAP_SWJ_Clock(const uint8_t *request, uint8_t *response) {
     return ((4U << 16) | 1U);
   }
 
+#if defined(DAP_PORT_SWJ_CLOCK)
+  *response = DAP_PORT_SWJ_CLOCK(clock) ? DAP_ERROR : DAP_OK;
+#else
   Set_Clock_Delay(clock);
 
   *response = DAP_OK;
+#endif
 #else
   *response = DAP_ERROR;
 #endif
@@ -1812,5 +1829,7 @@ void DAP_Setup(void) {
   // Sets DAP_Data.fast_clock and DAP_Data.clock_delay.
   Set_Clock_Delay(DAP_DEFAULT_SWJ_CLOCK);
 
+  /* Abort belongs to the previous session, never the new one. */
+  DAP_TransferAbort = 0;
   DAP_SETUP();  // Device specific setup
 }
